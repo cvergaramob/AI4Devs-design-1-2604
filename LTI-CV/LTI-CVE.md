@@ -20,7 +20,14 @@ La plataforma cubre el ciclo completo de adquisición de talento: desde la creac
 | Fortune 500 que usa un ATS | 97.8% |
 | Recruiters frustrados con su ATS actual | 68% |
 
-> **Fuentes:** Grand View Research, *Applicant Tracking System Market Report 2025*; Gartner, *Talent Acquisition Technology Market Guide 2025*; SelectSoftware Reviews, *ATS Statistics & Trends 2026*; G2, *ATS Grid Report Spring 2026*; LinkedIn, *Global Talent Trends 2025*.
+> **Fuentes (consultadas el 25-May-2026):**
+> 1. Grand View Research — *Applicant Tracking System Market Size, Share & Trends Analysis Report, 2025–2034* · <https://www.grandviewresearch.com/industry-analysis/applicant-tracking-system-market> · Publicado: 2025
+> 2. Gartner — *Market Guide for Talent Acquisition Technologies, 2025* · <https://www.gartner.com/en/documents/talent-acquisition-market-guide-2025> · Publicado: 2025
+> 3. SelectSoftware Reviews — *ATS Statistics & Trends 2026* · <https://www.selectsoftwarereviews.com/resources/ats-statistics> · Publicado: ene. 2026
+> 4. G2 — *Applicant Tracking Systems (ATS) Grid® Report, Spring 2026* · <https://www.g2.com/categories/applicant-tracking-system> · Publicado: mar. 2026
+> 5. LinkedIn — *Global Talent Trends 2025* · <https://business.linkedin.com/talent-solutions/global-talent-trends> · Publicado: 2025
+>
+> **Nota:** Los reportes de Grand View Research y Gartner son de pago; las URLs apuntan a la página de producto pública. Las métricas de mercado ($3.1B, CAGR 8.1%) provienen del resumen ejecutivo de Grand View Research; adopción Fortune 500 (97.8%) y frustración de recruiters (68%) de SelectSoftware Reviews y G2 respectivamente.
 
 ---
 
@@ -1067,6 +1074,8 @@ erDiagram
     enum status
     timestamp sent_at
     jsonb payload
+    string related_entity_type
+    uuid related_entity_id
     timestamp created_at
   }
 
@@ -1138,8 +1147,13 @@ erDiagram
 #### Constraints de base de datos
 
 ```sql
--- RN-01: Un candidato no puede aplicar más de una vez a la misma vacante
-ALTER TABLE applications ADD CONSTRAINT uq_candidate_job UNIQUE (candidate_id, job_id);
+-- RN-01: Un candidato no puede tener más de una Application activa por vacante.
+-- Se usa un partial unique index para permitir re-aplicaciones históricas
+-- (ej. un candidato rechazado puede volver a aplicar en el futuro).
+-- Las etapas terminales 'hired' y 'rejected' quedan excluidas del índice.
+CREATE UNIQUE INDEX uq_application_active_candidate_job
+  ON applications (candidate_id, job_id)
+  WHERE stage NOT IN ('hired', 'rejected');
 
 -- RN-02: El token de magic link es único en la tabla
 ALTER TABLE magic_links ADD CONSTRAINT uq_magic_link_token UNIQUE (token);
@@ -1158,7 +1172,7 @@ ALTER TABLE organizations ADD CONSTRAINT uq_organization_slug UNIQUE (slug);
 
 | ID | Regla | Entidad/es afectada/s | Validable |
 |---|---|---|---|
-| **RN-01** | Un candidato solo puede tener una `Application` activa por vacante | `Application` | `UNIQUE(candidate_id, job_id)` en DB |
+| **RN-01** | Un candidato solo puede tener una `Application` activa por vacante (etapas no terminales). Puede re-aplicar si su candidatura previa está en `hired` o `rejected` | `Application` | `UNIQUE INDEX` parcial sobre `(candidate_id, job_id) WHERE stage NOT IN ('hired', 'rejected')` |
 | **RN-02** | Un `MagicLink` solo puede usarse una vez: `used_at IS NULL` al validar | `MagicLink` | Query: `SELECT used_at FROM magic_links WHERE token = ?` |
 | **RN-03** | Toda entidad operacional debe tener `organization_id` — sin excepciones | Todas las tenant-scoped | RLS Policy en PostgreSQL |
 | **RN-04** | No se puede crear una `Interview` para una `Application` en estado `rejected` o `hired` | `Interview`, `Application` | Check en capa de servicio antes de INSERT |
@@ -1261,18 +1275,64 @@ ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE magic_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
--- Política genérica (replicar por tabla)
+-- ---------------------------------------------------------------
+-- Políticas RLS por tabla
+-- El middleware inyecta al inicio de cada request autenticado:
+--   SET LOCAL app.organization_id = '<uuid-del-tenant>';
+-- ---------------------------------------------------------------
+
+-- Tablas con organization_id directo: política directa
 CREATE POLICY tenant_isolation ON applications
   USING (organization_id = current_setting('app.organization_id')::uuid);
 
--- El middleware ejecuta esto al inicio de cada request autenticado:
--- SET LOCAL app.organization_id = '<uuid-del-tenant>';
+CREATE POLICY tenant_isolation ON jobs
+  USING (organization_id = current_setting('app.organization_id')::uuid);
+
+CREATE POLICY tenant_isolation ON candidates
+  USING (organization_id = current_setting('app.organization_id')::uuid);
+
+CREATE POLICY tenant_isolation ON interviews
+  USING (organization_id = current_setting('app.organization_id')::uuid);
+
+CREATE POLICY tenant_isolation ON notifications
+  USING (organization_id = current_setting('app.organization_id')::uuid);
+
+CREATE POLICY tenant_isolation ON magic_links
+  USING (organization_id = current_setting('app.organization_id')::uuid);
+
+CREATE POLICY tenant_isolation ON audit_logs
+  USING (organization_id = current_setting('app.organization_id')::uuid);
+
+-- Tablas sin organization_id directo: política por JOIN hacia entidad padre
+-- interview_participants → interview → application → organization_id
+CREATE POLICY tenant_isolation ON interview_participants
+  USING (
+    interview_id IN (
+      SELECT i.id FROM interviews i
+      JOIN applications a ON a.id = i.application_id
+      WHERE a.organization_id = current_setting('app.organization_id')::uuid
+    )
+  );
+
+-- scorecards → application → organization_id
+CREATE POLICY tenant_isolation ON scorecards
+  USING (
+    application_id IN (
+      SELECT id FROM applications
+      WHERE organization_id = current_setting('app.organization_id')::uuid
+    )
+  );
 ```
 
-`AuditLog` tiene RLS pero no permite DELETE ni UPDATE mediante política de rol:
+`AuditLog` tiene RLS pero no permite DELETE ni UPDATE mediante política de rol. `app_role` es el rol PostgreSQL con el que se conecta la aplicación (distinto del superusuario usado en migraciones):
 
 ```sql
--- Rol de aplicación: sin permisos de modificación en audit_logs
+-- Crear el rol de aplicación (ejecutar una sola vez en setup de base de datos)
+-- CREATE ROLE app_role LOGIN PASSWORD '<contraseña-segura>';
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_role;
+-- GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_role;
+
+-- Revocar permisos de modificación sobre audit_logs (append-only)
 REVOKE UPDATE, DELETE ON audit_logs FROM app_role;
 ```
 
