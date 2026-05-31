@@ -20,6 +20,8 @@ La plataforma cubre el ciclo completo de adquisición de talento: desde la creac
 | Fortune 500 que usa un ATS | 97.8% |
 | Recruiters frustrados con su ATS actual | 68% |
 
+> **Fuentes:** Grand View Research, *Applicant Tracking System Market Report 2025*; Gartner, *Talent Acquisition Technology Market Guide 2025*; SelectSoftware Reviews, *ATS Statistics & Trends 2026*; G2, *ATS Grid Report Spring 2026*; LinkedIn, *Global Talent Trends 2025*.
+
 ---
 
 ## 2. Análisis de los 3 ATS Más Relevantes del Mercado
@@ -241,8 +243,6 @@ Usuarios internos ilimitados en todos los tiers — cobrar por seat penaliza la 
 
 ## 7. Lean Canvas — Modelo de Negocio
 
-# Lean Canvas — ATS centrado en experiencia humana
-
 ```mermaid
 ---
 config:
@@ -319,14 +319,14 @@ block-beta
   SaaS recurrente · usuarios ilimitados · sin add-ons · prueba 30 días sin tarjeta
   ARR objetivo al mes 12: 500k–1 M USD"]:2
 
-  style P     fill:#FCEBEB,stroke:#F09595,stroke-width:1.5px,color:#7F1D1D
+  style P     fill:#fef2f2,stroke:#f87171,stroke-width:1.5px,color:#7f1d1d
   style S     fill:#EFF6FF,stroke:#85B7EB,stroke-width:1.5px,color:#1E3A5F
   style M     fill:#F0FDF4,stroke:#97C459,stroke-width:1.5px,color:#14532D
   style U     fill:#FEFCE8,stroke:#EF9F27,stroke-width:2px,color:#451A03
   style V     fill:#F5F3FF,stroke:#AFA9EC,stroke-width:1.5px,color:#2E1065
   style C     fill:#FFF7ED,stroke:#F0997B,stroke-width:1.5px,color:#7C2D12
   style G     fill:#F0FDF4,stroke:#5DCAA5,stroke-width:1.5px,color:#064E3B
-  style COSTS fill:#FCEBEB,stroke:#F09595,stroke-width:1.5px,color:#7F1D1D
+  style COSTS fill:#fef2f2,stroke:#f87171,stroke-width:1.5px,color:#7f1d1d
   style REV   fill:#F0FDF4,stroke:#97C459,stroke-width:1.5px,color:#14532D
   style SP    fill:transparent,stroke:transparent
 ```
@@ -721,11 +721,30 @@ El modelo de datos cubre las entidades, atributos y relaciones necesarias para s
 
 ### 9.1 Entidades y Atributos
 
+#### `Organization` (Empresa cliente — raíz del tenant)
+
+Entidad raíz del modelo multi-tenant. Cada empresa cliente que contrata el servicio es una `Organization`. Todas las demás entidades del sistema están vinculadas a ella mediante `organization_id`, lo que garantiza el aislamiento completo de datos entre tenants.
+
+| Atributo | Tipo | Descripción |
+|---|---|---|
+| `id` | UUID | Identificador único de la organización |
+| `name` | VARCHAR(200) | Nombre de la empresa |
+| `slug` | VARCHAR(100) (único) | Identificador URL-safe (ej. `acme-corp`) |
+| `plan` | ENUM | `starter` · `growth` · `scale` |
+| `status` | ENUM | `active` · `suspended` · `cancelled` |
+| `billing_email` | STRING | Email de contacto para facturación |
+| `max_active_jobs` | INTEGER | Límite de vacantes activas según plan |
+| `created_at` | TIMESTAMP | Fecha de alta |
+| `updated_at` | TIMESTAMP | Última modificación |
+
+---
+
 #### `Job` (Vacante)
 
 | Atributo | Tipo | Descripción |
 |---|---|---|
 | `id` | UUID | Identificador único de la vacante |
+| `organization_id` | UUID (FK → Organization) | Tenant al que pertenece la vacante |
 | `title` | STRING | Título del puesto |
 | `description` | TEXT | Descripción completa del rol y responsabilidades |
 | `requirements` | TEXT | Requisitos mínimos y deseables |
@@ -747,6 +766,7 @@ El modelo de datos cubre las entidades, atributos y relaciones necesarias para s
 | Atributo | Tipo | Descripción |
 |---|---|---|
 | `id` | UUID | Identificador único del candidato |
+| `organization_id` | UUID (FK → Organization) | Tenant al que pertenece el candidato |
 | `first_name` | STRING | Nombre |
 | `last_name` | STRING | Apellido |
 | `email` | STRING (único) | Email principal |
@@ -760,9 +780,11 @@ El modelo de datos cubre las entidades, atributos y relaciones necesarias para s
 | `source` | ENUM | `linkedin` · `indeed` · `career_site` · `referral` · `agency` · `other` |
 | `gdpr_consent` | BOOLEAN | Consentimiento explícito de tratamiento de datos |
 | `gdpr_consent_at` | TIMESTAMP | Fecha y hora del consentimiento |
-| `portal_token` | STRING | Token único para acceso al portal (sin login) |
+| `portal_token` | STRING | Token único para acceso al portal de seguimiento (sin login). Ver nota de diseño. |
 | `created_at` | TIMESTAMP | Fecha de registro |
 | `updated_at` | TIMESTAMP | Última modificación |
+
+> **Decisión de diseño — `portal_token` vs `MagicLink`:** El `portal_token` del candidato es un token de larga duración (no expira) que identifica al candidato en su portal de seguimiento de solo lectura. No concede acceso al sistema interno ni puede tomar acciones. Por ese motivo se modela como campo del `Candidate` en lugar de como entidad `MagicLink`: no tiene ciclo de vida de uso-único ni expiración. El `MagicLink` del HM Inbox, en cambio, es una sesión temporal de un solo uso con expiración de 72h que concede acceso de escritura (decisiones de avance/rechazo), lo que justifica su modelado como entidad separada con auditoría completa.
 
 #### `Application` (Candidatura)
 
@@ -771,6 +793,7 @@ Entidad central del modelo. Representa la relación entre un candidato y una vac
 | Atributo | Tipo | Descripción |
 |---|---|---|
 | `id` | UUID | Identificador único |
+| `organization_id` | UUID (FK → Organization) | Tenant al que pertenece la candidatura |
 | `candidate_id` | UUID (FK → Candidate) | Candidato que aplica |
 | `job_id` | UUID (FK → Job) | Vacante a la que aplica |
 | `stage` | ENUM | `applied` · `screening` · `hm_review` · `interview` · `offer` · `hired` · `rejected` |
@@ -792,6 +815,7 @@ Entidad central del modelo. Representa la relación entre un candidato y una vac
 | Atributo | Tipo | Descripción |
 |---|---|---|
 | `id` | UUID | Identificador único |
+| `organization_id` | UUID (FK → Organization) | Tenant al que pertenece el usuario |
 | `first_name` | STRING | Nombre |
 | `last_name` | STRING | Apellido |
 | `email` | STRING (único) | Email corporativo |
@@ -801,18 +825,19 @@ Entidad central del modelo. Representa la relación entre un candidato y una vac
 | `calendar_token` | TEXT | Token OAuth para calendario (encriptado, nullable) |
 | `notification_email` | BOOLEAN | Recibe notificaciones por email |
 | `notification_push` | BOOLEAN | Recibe notificaciones push móvil |
-| `magic_link_token` | STRING | Token temporal para HM Inbox (nullable, expira en 72h) |
-| `magic_link_expires_at` | TIMESTAMP | Expiración del magic link activo (nullable) |
 | `is_active` | BOOLEAN | Si el usuario tiene acceso activo |
 | `last_login_at` | TIMESTAMP | Fecha y hora del último acceso (nullable) |
 | `created_at` | TIMESTAMP | Fecha de creación |
 | `updated_at` | TIMESTAMP | Última modificación |
+
+> **Nota:** Los magic links de acceso al HM Inbox se gestionan en la entidad `MagicLink` (ver más abajo), no como campos del usuario, ya que conceptualmente son sesiones temporales con ciclo de vida propio.
 
 #### `Interview` (Entrevista)
 
 | Atributo | Tipo | Descripción |
 |---|---|---|
 | `id` | UUID | Identificador único |
+| `organization_id` | UUID (FK → Organization) | Tenant al que pertenece la entrevista |
 | `application_id` | UUID (FK → Application) | Candidatura a la que pertenece |
 | `type` | ENUM | `phone_screen` · `technical` · `panel` · `cultural_fit` · `final` |
 | `status` | ENUM | `proposed` · `scheduled` · `confirmed` · `completed` · `cancelled` · `no_show` |
@@ -862,6 +887,7 @@ Tabla de unión entre `Interview` y `User` que registra a cada entrevistador y s
 | Atributo | Tipo | Descripción |
 |---|---|---|
 | `id` | UUID | Identificador único |
+| `organization_id` | UUID (FK → Organization) | Tenant al que pertenece la notificación |
 | `recipient_type` | ENUM | `candidate` · `user` |
 | `recipient_id` | UUID | ID del candidato o usuario destinatario |
 | `channel` | ENUM | `email` · `whatsapp` · `push` · `sms` |
@@ -873,78 +899,130 @@ Tabla de unión entre `Interview` y `User` que registra a cada entrevistador y s
 | `related_entity_id` | UUID | ID de la entidad relacionada |
 | `created_at` | TIMESTAMP | Fecha de creación |
 
-### 9.2 Relaciones entre Entidades
+#### `MagicLink` (Sesión temporal para HM Inbox)
 
-**Diagrama entidad-relación (ERD):**
+Entidad que gestiona los tokens de acceso sin login para el flujo del HM Inbox. Se modela como entidad separada de `User` porque tiene ciclo de vida propio: se crea, se consume y se invalida de forma independiente al perfil del usuario.
+
+| Atributo | Tipo | Descripción |
+|---|---|---|
+| `id` | UUID | Identificador único |
+| `organization_id` | UUID (FK → Organization) | Tenant al que pertenece |
+| `user_id` | UUID (FK → User) | Hiring manager destinatario |
+| `application_id` | UUID (FK → Application) | Candidatura a revisar |
+| `token` | STRING (único) | Token criptográficamente aleatorio (256 bits) |
+| `expires_at` | TIMESTAMP | Expiración (72h desde creación) |
+| `used_at` | TIMESTAMP | Cuándo fue consumido (NULL si no usado) |
+| `created_at` | TIMESTAMP | Fecha de creación |
+
+**Flujo de validación:** Al procesar el token, el sistema verifica en orden: (1) `token` existe en la tabla, (2) `expires_at > NOW()`, (3) `used_at IS NULL`. Si las tres condiciones se cumplen, concede acceso y actualiza `used_at` en la misma transacción. Cualquier fallo rechaza la solicitud sin información adicional.
+
+#### `AuditLog` (Registro de auditoría)
+
+Entidad inmutable que registra toda acción relevante sobre datos del sistema: cambios de estado, decisiones de contratación, accesos por magic link, modificaciones de configuración y operaciones GDPR. Garantiza trazabilidad completa para cumplimiento normativo y depuración.
+
+| Atributo | Tipo | Descripción |
+|---|---|---|
+| `id` | UUID | Identificador único |
+| `organization_id` | UUID (FK → Organization) | Tenant donde ocurrió el evento |
+| `user_id` | UUID (FK → User, nullable) | Usuario que realizó la acción (NULL para acciones de sistema) |
+| `entity_type` | VARCHAR | Entidad afectada: `application`, `job`, `candidate`, `interview`, etc. |
+| `entity_id` | UUID | ID del registro afectado |
+| `action` | VARCHAR | Acción realizada: `create`, `update`, `delete`, `stage_change`, `access`, etc. |
+| `old_values` | JSONB | Estado anterior del registro (nullable en creaciones) |
+| `new_values` | JSONB | Estado posterior del registro (nullable en eliminaciones) |
+| `ip_address` | INET | Dirección IP del solicitante |
+| `user_agent` | TEXT | Agente de usuario del cliente (nullable) |
+| `created_at` | TIMESTAMP | Marca temporal del evento (inmutable) |
+
+> **Nota de implementación:** La tabla `AuditLog` es de solo inserción (append-only). Ningún proceso tiene permisos de `UPDATE` o `DELETE` sobre ella. La retención es de 5 años para cumplimiento con normativas laborales y GDPR.
+
+### 9.2 Relaciones entre Entidades
 
 ```mermaid
 erDiagram
 
+  Organization {
+    uuid id PK
+    string name
+    string slug
+    enum plan
+    enum status
+    string billing_email
+    timestamp created_at
+  }
+
   User {
     uuid id PK
+    uuid organization_id FK
     string first_name
     string last_name
     string email
     enum role
     enum calendar_provider
-    string magic_link_token
-    timestamp magic_link_expires_at
     boolean is_active
+    timestamp created_at
+  }
+
+  MagicLink {
+    uuid id PK
+    uuid organization_id FK
+    uuid user_id FK
+    uuid application_id FK
+    string token
+    timestamp expires_at
+    timestamp used_at
     timestamp created_at
   }
 
   Job {
     uuid id PK
+    uuid organization_id FK
     string title
-    text description
-    text requirements
     string department
-    string location
     enum employment_type
-    integer salary_range_min
-    integer salary_range_max
     enum status
-    timestamp published_at
-    timestamp closes_at
     uuid created_by FK
     uuid hiring_manager_id FK
+    timestamp published_at
     timestamp created_at
   }
 
   Candidate {
     uuid id PK
+    uuid organization_id FK
     string first_name
     string last_name
     string email
-    string phone
     string cv_url
-    jsonb parsed_experience
-    jsonb parsed_education
-    array parsed_skills
     enum source
     boolean gdpr_consent
     timestamp gdpr_consent_at
-    string portal_token
     timestamp created_at
   }
 
   Application {
     uuid id PK
+    uuid organization_id FK
     uuid candidate_id FK
     uuid job_id FK
     uuid assigned_recruiter_id FK
     enum stage
     timestamp stage_updated_at
     enum rejection_reason
+    text rejection_note
     float ai_fit_score
     text ai_summary
+    text cover_letter
     jsonb answers
     integer candidate_nps
+    text candidate_nps_comment
     timestamp created_at
+    timestamp updated_at
   }
 
   Interview {
     uuid id PK
+    uuid organization_id FK
     uuid application_id FK
     uuid created_by FK
     enum type
@@ -952,9 +1030,6 @@ erDiagram
     timestamp scheduled_at
     integer duration_minutes
     enum location_type
-    string video_link
-    boolean reminder_sent_24h
-    boolean reminder_sent_1h
     timestamp created_at
   }
 
@@ -978,13 +1053,13 @@ erDiagram
     jsonb criteria_scores
     text strengths
     text concerns
-    text notes
     timestamp submitted_at
     timestamp created_at
   }
 
   Notification {
     uuid id PK
+    uuid organization_id FK
     enum recipient_type
     uuid recipient_id
     enum channel
@@ -992,16 +1067,37 @@ erDiagram
     enum status
     timestamp sent_at
     jsonb payload
-    string related_entity_type
-    uuid related_entity_id
     timestamp created_at
   }
+
+  AuditLog {
+    uuid id PK
+    uuid organization_id FK
+    uuid user_id FK
+    string entity_type
+    uuid entity_id
+    string action
+    jsonb old_values
+    jsonb new_values
+    inet ip_address
+    timestamp created_at
+  }
+
+  Organization ||--o{ User : "tiene"
+  Organization ||--o{ Job : "publica"
+  Organization ||--o{ Candidate : "gestiona"
+  Organization ||--o{ Application : "procesa"
+  Organization ||--o{ Interview : "agenda"
+  Organization ||--o{ Notification : "genera"
+  Organization ||--o{ MagicLink : "genera"
+  Organization ||--o{ AuditLog : "registra"
 
   User ||--o{ Job : "crea (created_by)"
   User ||--o{ Job : "gestiona (hiring_manager)"
   User ||--o{ Application : "asignado como recruiter"
   User ||--o{ Interview : "agenda (created_by)"
   User ||--o{ InterviewParticipant : "participa como entrevistador"
+  User ||--o{ MagicLink : "recibe"
 
   Job ||--o{ Application : "recibe"
 
@@ -1010,6 +1106,7 @@ erDiagram
   Application ||--o{ Interview : "genera"
   Application ||--o{ Scorecard : "acumula"
   Application ||--o{ Notification : "dispara"
+  Application ||--o{ MagicLink : "origina"
 
   Interview ||--o{ InterviewParticipant : "tiene"
   Interview ||--o{ Notification : "genera"
@@ -1021,30 +1118,280 @@ erDiagram
 
 | Relación | Cardinalidad | Descripción |
 |---|---|---|
+| `Organization` → `User` | 1:N | Una organización tiene múltiples usuarios internos |
+| `Organization` → `Job` | 1:N | Una organización publica múltiples vacantes |
+| `Organization` → `Candidate` | 1:N | Una organización gestiona su propio pool de candidatos |
+| `Organization` → `Application` | 1:N | Todas las candidaturas pertenecen a un tenant |
+| `Organization` → `AuditLog` | 1:N | Registro completo de eventos por tenant |
+| `Organization` → `Notification` | 1:N | Todas las notificaciones pertenecen a un tenant |
 | `User` → `Job` (hiring_manager) | 1:N | Un hiring manager puede tener múltiples vacantes asignadas |
 | `Job` → `Application` | 1:N | Una vacante recibe múltiples candidaturas |
-| `Candidate` → `Application` | 1:N | Un candidato puede aplicar a múltiples vacantes |
+| `Candidate` → `Application` | 1:N | Un candidato puede aplicar a múltiples vacantes de la misma organización |
 | `Application` → `Interview` | 1:N | Una candidatura puede tener múltiples entrevistas |
+| `Application` → `MagicLink` | 1:N | Cada alerta HM genera un MagicLink nuevo |
 | `Interview` → `InterviewParticipant` | 1:N | Una entrevista puede tener múltiples entrevistadores |
 | `InterviewParticipant` → `Scorecard` | 1:1 | Cada participante entrega un único scorecard por entrevista |
 | `Application` → `Scorecard` | 1:N | Una candidatura acumula scorecards de cada entrevistador en cada ronda |
-| `Application` → `Notification` | 1:N | Una candidatura genera múltiples notificaciones a lo largo del proceso |
 
-### 9.4 Reglas de Negocio Principales
+### 9.4 Reglas de Integridad y Negocio
 
-**Unicidad de candidatura:** No puede existir más de una `Application` activa entre el mismo `Candidate` y el mismo `Job`.
+#### Constraints de base de datos
 
-**Progresión de etapas:** El campo `stage` sigue una máquina de estados. Transiciones válidas: `applied → screening → hm_review → interview → offer → hired`. Cualquier etapa puede transicionar a `rejected`. No se permiten retrocesos excepto de `hm_review` a `screening`.
+```sql
+-- RN-01: Un candidato no puede aplicar más de una vez a la misma vacante
+ALTER TABLE applications ADD CONSTRAINT uq_candidate_job UNIQUE (candidate_id, job_id);
 
-**Integridad del scorecard:** No se puede avanzar una `Application` de `interview` a `offer` si existe algún `InterviewParticipant` con `scorecard_submitted = false` en la última ronda.
+-- RN-02: El token de magic link es único en la tabla
+ALTER TABLE magic_links ADD CONSTRAINT uq_magic_link_token UNIQUE (token);
 
-**Expiración del magic link:** El `magic_link_token` expira en 72 horas. Cada nueva alerta al HM genera un nuevo token y anula el anterior.
+-- RN-03: El email de candidato es único por organización
+ALTER TABLE candidates ADD CONSTRAINT uq_candidate_email_org UNIQUE (organization_id, email);
 
-**Consentimiento GDPR:** No se puede crear una `Application` si `Candidate.gdpr_consent = false`. Los registros sin candidaturas activas se eliminan automáticamente a los 12 meses.
+-- RN-04: El email de usuario interno es único globalmente (un user no puede pertenecer a dos orgs)
+ALTER TABLE users ADD CONSTRAINT uq_user_email UNIQUE (email);
+
+-- RN-05: El slug de organización es único globalmente
+ALTER TABLE organizations ADD CONSTRAINT uq_organization_slug UNIQUE (slug);
+```
+
+#### Reglas de negocio verificables
+
+| ID | Regla | Entidad/es afectada/s | Validable |
+|---|---|---|---|
+| **RN-01** | Un candidato solo puede tener una `Application` activa por vacante | `Application` | `UNIQUE(candidate_id, job_id)` en DB |
+| **RN-02** | Un `MagicLink` solo puede usarse una vez: `used_at IS NULL` al validar | `MagicLink` | Query: `SELECT used_at FROM magic_links WHERE token = ?` |
+| **RN-03** | Toda entidad operacional debe tener `organization_id` — sin excepciones | Todas las tenant-scoped | RLS Policy en PostgreSQL |
+| **RN-04** | No se puede crear una `Interview` para una `Application` en estado `rejected` o `hired` | `Interview`, `Application` | Check en capa de servicio antes de INSERT |
+| **RN-05** | No se puede avanzar de `interview` a `offer` con scorecards pendientes | `Application`, `InterviewParticipant` | `scorecard_submitted = true` para todos los participantes de la última ronda |
+| **RN-06** | No se puede crear una `Application` sin `gdpr_consent = true` en el `Candidate` | `Application`, `Candidate` | Validación en endpoint de aplicación |
+| **RN-07** | Toda decisión de contratación (`hired`) debe estar registrada en `AuditLog` | `AuditLog`, `Application` | Trigger en base de datos al hacer `stage = hired` |
+
+**Expiración del magic link:** Cada nueva alerta al HM invalida el `MagicLink` anterior para esa candidatura creando uno nuevo. El token expira en 72h independientemente de si fue usado.
+
+**Consentimiento GDPR:** Los registros de candidatos sin candidaturas activas se eliminan automáticamente a los 12 meses. El evento de borrado queda registrado en `AuditLog`.
+
+### 9.5 Schemas de campos JSONB
+
+Los campos JSONB tienen estructura interna fija. Todo código que lea o escriba estos campos debe validar contra estos schemas.
+
+#### `Application.answers`
+
+Respuestas a las preguntas de knockout definidas por la vacante. Cada pregunta tiene un ID que se referencia desde la definición del `Job`.
+
+```json
+{
+  "questions": [
+    {
+      "question_id": "uuid",
+      "question_text": "¿Tienes 3+ años de experiencia en React?",
+      "answer_type": "boolean | text | number | single_choice",
+      "answer_value": true
+    }
+  ]
+}
+```
+
+Una respuesta de tipo `boolean` con `answer_value: false` en una pregunta marcada como knockout desencadena rechazo automático del sistema (el único rechazo automático permitido por AI Governance — es una regla de negocio determinista, no IA).
+
+#### `Scorecard.criteria_scores`
+
+Puntuaciones por criterio de evaluación. Los criterios se definen a nivel de `Job` (no documentado en este MVP — extensión futura). Para el MVP, el conjunto de criterios es fijo.
+
+```json
+{
+  "technical_skills": { "score": 4, "max": 5 },
+  "communication": { "score": 3, "max": 5 },
+  "culture_fit": { "score": 5, "max": 5 },
+  "problem_solving": { "score": 4, "max": 5 },
+  "leadership": { "score": 3, "max": 5 }
+}
+```
+
+Rango de `score`: 1–5 entero. Todos los criterios son obligatorios antes de marcar `scorecard_submitted = true`.
+
+#### `Notification.payload`
+
+Variables de renderizado de la plantilla. El `template_type` determina qué variables son obligatorias.
+
+```json
+{
+  "template_type": "interview_scheduled",
+  "recipient_name": "Ana García",
+  "job_title": "Senior Frontend Engineer",
+  "interview_date": "2026-06-15",
+  "interview_time": "10:00",
+  "interview_timezone": "America/Argentina/Buenos_Aires",
+  "interview_type": "video",
+  "video_link": "https://meet.google.com/abc-def-ghi",
+  "confirm_url": "https://ats.com/confirm?token=...",
+  "reschedule_url": "https://ats.com/reschedule?token=..."
+}
+```
+
+#### `AuditLog.old_values` / `AuditLog.new_values`
+
+Snapshot del registro afectado en el momento del evento. Para `stage_change`:
+
+```json
+{
+  "stage": "hm_review",
+  "stage_updated_at": "2026-06-10T14:32:00Z",
+  "ai_fit_score": 0.87,
+  "ai_summary": "Candidato con 5 años en React..."
+}
+```
+
+Solo se almacenan los campos que cambiaron, no el registro completo, excepto en acciones `create` y `delete` donde se almacena el registro íntegro.
+
+### 9.6 Implementación RLS e Índices de base de datos
+
+#### Row-Level Security (PostgreSQL)
+
+Cada tabla tenant-scoped tiene una política RLS que filtra por `organization_id`. El middleware inyecta el valor al inicio de cada transacción.
+
+```sql
+-- Activar RLS en todas las tablas tenant-scoped
+ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE candidates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE applications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE interviews ENABLE ROW LEVEL SECURITY;
+ALTER TABLE interview_participants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scorecards ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE magic_links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+
+-- Política genérica (replicar por tabla)
+CREATE POLICY tenant_isolation ON applications
+  USING (organization_id = current_setting('app.organization_id')::uuid);
+
+-- El middleware ejecuta esto al inicio de cada request autenticado:
+-- SET LOCAL app.organization_id = '<uuid-del-tenant>';
+```
+
+`AuditLog` tiene RLS pero no permite DELETE ni UPDATE mediante política de rol:
+
+```sql
+-- Rol de aplicación: sin permisos de modificación en audit_logs
+REVOKE UPDATE, DELETE ON audit_logs FROM app_role;
+```
+
+#### Índices recomendados
+
+```sql
+-- Queries de pipeline más frecuentes
+CREATE INDEX idx_applications_org_job ON applications (organization_id, job_id);
+CREATE INDEX idx_applications_org_stage ON applications (organization_id, stage);
+CREATE INDEX idx_applications_org_recruiter ON applications (organization_id, assigned_recruiter_id);
+
+-- Validación de magic link (query crítica de baja latencia)
+CREATE UNIQUE INDEX idx_magic_links_token ON magic_links (token);
+CREATE INDEX idx_magic_links_user_app ON magic_links (user_id, application_id);
+
+-- Portal del candidato
+CREATE INDEX idx_candidates_portal_token ON candidates (portal_token);
+
+-- Auditoría y compliance
+CREATE INDEX idx_audit_logs_entity ON audit_logs (organization_id, entity_type, entity_id);
+CREATE INDEX idx_audit_logs_user ON audit_logs (organization_id, user_id, created_at DESC);
+
+-- Notificaciones y deduplicación
+CREATE INDEX idx_notifications_recipient ON notifications (organization_id, recipient_type, recipient_id, created_at DESC);
+CREATE INDEX idx_notifications_entity ON notifications (related_entity_type, related_entity_id, type);
+```
+
+#### `NotificationTemplateType` — Definición de tipos
+
+El tipo referenciado en el código del worker (sección 13, Nivel 4) se define así:
+
+```typescript
+type NotificationTemplateType =
+  | 'application_received'      // → Candidato: confirmación de recepción
+  | 'stage_change'              // → Candidato: cambio de etapa genérico
+  | 'hm_inbox_alert'            // → HM: nuevo candidato para revisar (con magic link)
+  | 'hm_reminder_24h'           // → HM: recordatorio si no respondió en 24h
+  | 'interview_scheduled'       // → Candidato + entrevistadores: entrevista confirmada
+  | 'interview_reminder_24h'    // → Candidato + entrevistadores: recordatorio 24h antes
+  | 'interview_reminder_1h'     // → Candidato: recordatorio 1h antes
+  | 'scorecard_request'         // → Entrevistador: solicitud de completar scorecard
+  | 'rejection'                 // → Candidato: rechazo (tono empático, sin motivo detallado)
+  | 'offer'                     // → Candidato: notificación de oferta formal
+
+// Cada template existe en sus variantes de canal:
+// application_received.email.html
+// application_received.whatsapp.txt
+// etc.
+```
+
+Las plantillas se almacenan en el filesystem del backend bajo `/templates/<template_type>/<channel>.<format>`. En plan Growth y Scale, las organizaciones pueden personalizar el contenido desde la UI de configuración.
 
 ---
 
-## 10. Diseño del Sistema a Alto Nivel
+#### Máquina de estados — `Application.stage`
+
+El campo `stage` sigue una máquina de estados con transiciones explícitas. El módulo `pipeline` valida en capa de servicio que toda transición sea válida antes de hacer el UPDATE. Transiciones no listadas son rechazadas con error `422 Unprocessable Entity`.
+
+```mermaid
+---
+config:
+  theme: default
+---
+stateDiagram-v2
+  [*] --> applied : Candidato envía aplicación
+
+  applied --> screening : Recruiter inicia revisión
+  applied --> rejected : Descartado en recepción
+
+  screening --> hm_review : Recruiter aprueba para HM
+  screening --> rejected : No cumple requisitos mínimos
+
+  hm_review --> screening : HM solicita más información (único retroceso permitido)
+  hm_review --> interview : HM aprueba candidato
+  hm_review --> rejected : HM rechaza candidato
+
+  interview --> offer : Equipo aprueba tras entrevistas\n[todos los scorecards completados]
+  interview --> rejected : Equipo descarta al candidato
+
+  offer --> hired : Candidato acepta la oferta
+  offer --> rejected : Candidato rechaza la oferta\no empresa retira la oferta
+
+  hired --> [*]
+  rejected --> [*]
+```
+
+> **Nota para implementación:** El único retroceso permitido es `hm_review → screening`. Todas las demás transiciones son hacia adelante o hacia `rejected`. Un candidato en estado `hired` o `rejected` no puede ser movido a ningún otro estado (terminal). La transición `interview → offer` tiene una guarda: `RN-05` debe cumplirse (todos los `InterviewParticipant` de la última ronda con `scorecard_submitted = true`).
+
+---
+
+## 10. Stack Tecnológico
+
+Referencia única del stack para el MVP. Toda decisión de implementación debe alinearse con estas elecciones antes de proponer alternativas.
+
+| Capa | Tecnología | Versión mínima | Alternativa descartada | Razón |
+|---|---|---|---|---|
+| **Lenguaje backend** | TypeScript | 5.x | Python | Tipado estático en todo el stack; el frontend ya usa TS |
+| **Runtime** | Node.js | 22 LTS | Deno, Bun | Ecosistema maduro; compatibilidad con BullMQ y librerías HRIS |
+| **Framework HTTP** | Fastify | 4.x | Express, NestJS | Rendimiento; soporte nativo de JSON Schema; menor overhead que NestJS para MVP |
+| **ORM** | Drizzle ORM | latest | Prisma, TypeORM | Queries cercanas a SQL, sin magic; tipado end-to-end sin codegen externo |
+| **Base de datos principal** | PostgreSQL | 16+ | MySQL | JSONB nativo, RLS, `erDiagram` expressions, soporte INET para AuditLog |
+| **Cache / Cola** | Redis + BullMQ | Redis 7+ | RabbitMQ, SQS | BullMQ sobre Redis unifica cache y cola en una sola dependencia de infraestructura |
+| **Almacenamiento archivos** | Cloudflare R2 | — | AWS S3 | S3-compatible sin egress fees; compatible con SDK de S3 |
+| **Frontend** | React + Vite | React 19, Vite 5 | Next.js | Menor complejidad de despliegue para MVP; SSR no requerido en fase 1 |
+| **Email** | Resend | — | SendGrid | API moderna, SDK TS nativo, mejor DX; SendGrid como fallback |
+| **WhatsApp** | 360dialog | — | Twilio | Menor costo por mensaje en LATAM; acceso directo a API de Meta |
+| **Push notifications** | Firebase FCM | — | OneSignal | Gratuito hasta 1M mensajes/día; SDK bien mantenido |
+| **Calendario** | Google Calendar API + Microsoft Graph | — | CalDAV genérico | Los dos providers cubren el 95% del mercado objetivo |
+| **LLM externo** | OpenAI GPT-4o mini | — | Claude Haiku, Gemini Flash | Menor costo por token para parsing y scoring; fácil swap via abstracción |
+| **CI/CD** | GitHub Actions | — | GitLab CI | Integrado con el repositorio; runners gratuitos suficientes para MVP |
+| **Hosting (MVP)** | Railway | — | Render, Fly.io | Deploy PostgreSQL + Redis + backend en un solo proveedor; créditos para startups |
+| **Hosting (escala)** | AWS ECS + RDS | — | GCP, Azure | Trigger: 500+ clientes activos o necesidad de SLA enterprise |
+| **Monitoreo** | Sentry (errores) + Datadog (métricas) | — | New Relic | Sentry gratuito para MVP; Datadog activado en escala |
+
+> **Convención de nombres de tablas:** snake_case plural en PostgreSQL (`applications`, `magic_links`, `audit_logs`, `interview_participants`). Los nombres de entidades en el modelo de datos usan PascalCase singular — la correspondencia es directa con el sufijo `s` o `_s`.
+
+---
+
+## 11. Diseño del Sistema a Alto Nivel
 
 El sistema sigue una arquitectura de **monolito modular** en la fase de diseño preliminar, con separación clara entre módulos para facilitar la extracción a microservicios cuando el crecimiento lo justifique. Esta decisión evita la complejidad operacional prematura de los microservicios manteniendo velocidad de desarrollo sin sacrificar la separación de responsabilidades.
 
@@ -1232,27 +1579,134 @@ La **capa de datos** combina PostgreSQL como base relacional principal con Row-L
 | Autenticación | JWT con access tokens de 1h. Refresh tokens de 30 días. Magic links de un solo uso con expiración de 72h |
 | Autorización | RBAC estricto por endpoint. Un recruiter solo puede operar candidaturas de sus vacantes asignadas |
 | Datos en reposo | Encriptación AES-256 en la base de datos. Tokens OAuth encriptados a nivel de columna |
-| Multi-tenancy | Row-Level Security en PostgreSQL. `organization_id` aplicado automáticamente vía middleware |
-| GDPR | Endpoint de borrado de datos de candidato. Purga automática programada a los 12 meses |
+| Multi-tenancy | Row-Level Security en PostgreSQL. `organization_id` inyectado automáticamente por middleware en cada query |
+| GDPR | Endpoint de borrado de datos de candidato. Purga automática programada a los 12 meses. Registro en `AuditLog` |
 
+### 11.1 Modelo de Seguridad y Autenticación
 
-**Justificación de la Arquitectura — Monolito Modular para el Backend del ATS**
+El sistema implementa un stack de identidad en capas que cubre los tres tipos de acceso: usuarios internos con sesión completa, hiring managers con acceso puntual por magic link, y candidatos con token de portal.
 
-La decisión de adoptar una arquitectura de **monolito modular** para el backend de la plataforma ATS responde a un balance deliberado entre velocidad de desarrollo, madurez del equipo, complejidad operacional y horizonte de crecimiento. Esta arquitectura permite construir un producto sólido, mantenible y con separación clara de responsabilidades desde el día 1, sin incurrir en la sobrecarga operacional que impondrían los microservicios en una fase de producto tan temprana.
+**Autenticación de usuarios internos:**
+- **SSO SAML 2.0 / OIDC** — Integración con proveedores corporativos (Okta, Azure AD, Google Workspace). Los planes Growth y Scale pueden exigir SSO como único método de acceso.
+- **OAuth 2.0** — Flujo estándar para usuarios sin SSO corporativo.
+- **MFA opcional** — TOTP (Google Authenticator, Authy) disponible para todos los roles. Obligatorio para `admin` en plan Scale.
+- **JWT con rotación** — Access token de 1h + refresh token de 30 días. Revocación inmediata al desactivar usuario.
 
-- Evitar Complejidad Operacional Prematura
-- Velocidad de Desarrollo como Ventaja Competitiva
-- Separación de Responsabilidades sin Sobrecarga de Red
-- Compatibilidad con la Capa de Datos Elegida
-- El Módulo de Notificaciones como Caso de Validación
+**Autorización — RBAC:**
 
-Los módulos están diseñados con fronteras claras para que, cuando el negocio lo requiera, puedan extraerse como microservicios sin necesidad de reescribir el dominio de negocio.
- 
-La arquitectura está diseñada para evolucionar: cuando el volumen de clientes, la madurez del equipo o los patrones de carga lo justifiquen, los módulos están listos para ser extraídos. Hasta entonces, el monolito modular es la apuesta que maximiza la velocidad de entrega, minimiza la complejidad operacional y mantiene la integridad transaccional que las reglas de negocio del ATS exigen.
+| Rol | Permisos principales |
+|---|---|
+| `admin` | Configuración completa del tenant, gestión de usuarios, integraciones |
+| `ta_lead` | Todo lo de recruiter + analytics globales + gestión de vacantes propias y del equipo |
+| `recruiter` | CRUD de vacantes y candidaturas asignadas, coordinación de entrevistas |
+| `hiring_manager` | Lectura de candidaturas de sus vacantes, emisión de decisiones vía HM Inbox |
+| `viewer` | Solo lectura de pipeline. Sin acceso a datos personales de candidatos |
+
+El middleware aplica `organization_id` en cada request autenticado, garantizando que ningún usuario pueda operar fuera de su tenant aunque manipule parámetros de la URL.
+
+**Autenticación HM Inbox (magic link):**
+El flujo está documentado en la entidad `MagicLink` (sección 9.1). El token es de 256 bits, de un solo uso y expira en 72h. No otorga acceso a otras secciones del sistema.
+
+### 11.2 AI Governance
+
+La plataforma utiliza IA generativa y modelos de scoring en el flujo de evaluación de candidatos. Dado el impacto que estas decisiones tienen sobre personas, se establecen principios de gobernanza explícitos:
+
+**Human-in-the-loop obligatorio**
+La IA no toma decisiones de contratación. Toda acción que modifica el `stage` de una `Application` requiere confirmación explícita de un usuario humano. El sistema puede sugerir (`ai_fit_score`, `ai_summary`), pero nunca ejecutar automáticamente un avance o rechazo.
+
+**Explainability**
+El `ai_summary` que ve el hiring manager incluye las razones que generaron el score de fit: qué experiencias coinciden con los requisitos, qué gaps se detectaron. No se exponen probabilidades brutas sin contexto.
+
+**Auditoría de decisiones con IA**
+Toda candidatura con `ai_fit_score` que luego recibe una decisión de contratación queda registrada en `AuditLog` con los valores de IA en el momento de la decisión (`old_values`). Esto permite revisar si el score IA correlaciona con las decisiones reales y detectar patrones de sesgo.
+
+**Sesgo y fairness**
+El modelo de scoring se entrena excluyendo atributos protegidos (nombre, género inferido, nacionalidad, edad estimada). El equipo de producto revisa métricas de equidad (disparate impact) en cada release del modelo. Los clientes en plan Scale pueden solicitar un informe de fairness semestral.
+
+### 11.3 Justificación — Monolito Modular
+
+La decisión de adoptar una arquitectura de **monolito modular** para el backend responde a un balance deliberado entre velocidad de desarrollo, madurez del equipo, complejidad operacional y horizonte de crecimiento. Esta arquitectura permite construir un producto sólido, mantenible y con separación clara de responsabilidades desde el día 1, sin incurrir en la sobrecarga operacional que impondrían los microservicios en una fase de producto tan temprana.
+
+- **Evitar complejidad operacional prematura** — Los microservicios requieren service mesh, distributed tracing y orquestación que no se justifican antes de los 500 clientes.
+- **Velocidad de desarrollo como ventaja competitiva** — Un monolito modular permite iterar en días, no semanas.
+- **Separación de responsabilidades sin sobrecarga de red** — Los módulos se comunican in-process; las llamadas inter-módulo son llamadas de función, no HTTP.
+- **Compatibilidad con la capa de datos elegida** — PostgreSQL con transacciones ACID entre módulos es imposible en microservicios sin sagas; en el monolito es nativo.
+- **El módulo de Notificaciones como caso de validación** — Ya opera de forma asíncrona (BullMQ) sin acoplar el resto del sistema, validando el patrón de desacoplamiento sin necesidad de un servicio separado.
+
+Los módulos están diseñados con fronteras claras para que, cuando el negocio lo requiera, puedan extraerse como microservicios sin necesidad de reescribir el dominio de negocio. El trigger recomendado para esa extracción es superar los 500 clientes activos o identificar un módulo con patrones de carga radicalmente distintos al resto.
 
 ---
 
-## 11. Diagrama C4 — Módulo de Notificaciones en Profundidad
+## 12. Contrato de API — Endpoints Principales
+
+Todos los endpoints usan prefijo `/api/v1`. Autenticación por header `Authorization: Bearer <jwt>` excepto los endpoints públicos marcados con 🔓. El `organization_id` nunca viaja en el body: el middleware lo extrae del JWT y lo inyecta en cada query.
+
+**Convenciones de respuesta:**
+- Éxito: `{ data: <payload>, meta?: { page, total } }`
+- Error: `{ error: { code: string, message: string, details?: object } }`
+- Códigos de error de negocio: `422` para violaciones de reglas de negocio (con `code` descriptivo como `"DUPLICATE_APPLICATION"`, `"INVALID_STAGE_TRANSITION"`).
+
+### Módulo Auth
+
+| Método | Path | Descripción | Auth |
+|---|---|---|---|
+| `POST` | `/auth/login` | Login con email + password | 🔓 |
+| `POST` | `/auth/sso/saml` | Inicio de flujo SSO SAML | 🔓 |
+| `POST` | `/auth/refresh` | Renovar access token con refresh token | 🔓 |
+| `POST` | `/auth/logout` | Revocar refresh token | ✅ |
+| `GET` | `/auth/magic-link/:token` | Validar y consumir magic link (HM Inbox) | 🔓 |
+
+### Módulo Jobs (Vacantes)
+
+| Método | Path | Descripción | Roles |
+|---|---|---|---|
+| `GET` | `/jobs` | Listar vacantes de la organización (filtros: status, department) | recruiter, ta_lead, admin |
+| `POST` | `/jobs` | Crear vacante | recruiter, ta_lead, admin |
+| `GET` | `/jobs/:id` | Detalle de vacante | recruiter, ta_lead, admin, hiring_manager |
+| `PATCH` | `/jobs/:id` | Actualizar vacante (campos parciales) | recruiter, ta_lead, admin |
+| `POST` | `/jobs/:id/publish` | Publicar en job boards configurados | recruiter, ta_lead, admin |
+| `POST` | `/jobs/:id/close` | Cerrar vacante | ta_lead, admin |
+| `GET` | `/jobs/public/:slug` | Vacante pública para el candidato | 🔓 |
+
+### Módulo Pipeline (Candidaturas)
+
+| Método | Path | Descripción | Roles |
+|---|---|---|---|
+| `POST` | `/jobs/:jobId/applications` | Crear candidatura (candidato aplica) | 🔓 |
+| `GET` | `/jobs/:jobId/applications` | Listar candidaturas de una vacante (Kanban) | recruiter, ta_lead, admin |
+| `GET` | `/applications/:id` | Detalle de candidatura | recruiter, ta_lead, admin, hiring_manager |
+| `PATCH` | `/applications/:id/stage` | Mover candidatura de etapa — valida máquina de estados | recruiter, ta_lead, admin |
+| `GET` | `/applications/:id/portal` | Portal de seguimiento del candidato | 🔓 (portal_token en query) |
+| `GET` | `/candidates` | Buscar candidatos en el pool de la organización | recruiter, ta_lead, admin |
+
+### Módulo Interviews (Entrevistas)
+
+| Método | Path | Descripción | Roles |
+|---|---|---|---|
+| `POST` | `/applications/:applicationId/interviews` | Crear entrevista y consultar disponibilidad | recruiter, ta_lead |
+| `GET` | `/applications/:applicationId/interviews` | Listar entrevistas de una candidatura | recruiter, ta_lead, hiring_manager |
+| `PATCH` | `/interviews/:id/confirm` | Candidato confirma horario (token en query) | 🔓 |
+| `POST` | `/interviews/:id/reschedule` | Reprogramar entrevista | recruiter, ta_lead |
+| `POST` | `/interview-participants/:id/scorecard` | Entrevistador envía scorecard | recruiter, ta_lead, hiring_manager |
+
+### Módulo Notifications
+
+| Método | Path | Descripción | Roles |
+|---|---|---|---|
+| `GET` | `/notifications` | Listar notificaciones del usuario autenticado | todos |
+| `GET` | `/notifications/stats` | Métricas de entregabilidad por canal | ta_lead, admin |
+
+### HM Inbox (Hiring Manager)
+
+| Método | Path | Descripción | Auth |
+|---|---|---|---|
+| `GET` | `/hm-inbox` | Lista de candidaturas pendientes de decisión | ✅ (JWT o magic link) |
+| `GET` | `/hm-inbox/:applicationId` | Tarjeta de candidato (resumen IA + score) | ✅ (JWT o magic link) |
+| `POST` | `/hm-inbox/:applicationId/decide` | Emitir decisión: `advance`, `reject`, `need_info` | ✅ (JWT o magic link) |
+
+---
+
+## 13. Diagrama C4 — Módulo de Notificaciones en Profundidad
 
 El módulo de Notificaciones es el componente de mayor volumen del sistema y el más crítico para la experiencia del candidato y la adopción del hiring manager. Se profundiza en él hasta el nivel de código (C4 nivel 4).
 
@@ -1319,6 +1773,8 @@ graph TB
   end
 
   subgraph BACK["Backend — Monolito Modular"]
+    AUTH["Módulo Auth\n(SSO · JWT · MagicLink)"]
+    JOBS["Módulo Jobs\n(vacantes · publicación multicanal)"]
     PIPE["Módulo Pipeline"]
     INTV["Módulo Interviews"]
     NOTIF["🔴 Módulo Notifications\n(componente en foco)"]
@@ -1336,6 +1792,8 @@ graph TB
   end
 
   UI --> GW
+  GW --> AUTH
+  GW --> JOBS
   GW --> PIPE
   GW --> INTV
 
@@ -1474,7 +1932,7 @@ class NotificationWorker {
 
 ---
 
-## 12. Conclusión Estratégica — Por Qué Este ATS Gana al Mercado
+## 14. Conclusión Estratégica — Por Qué Este ATS Gana al Mercado
 
 ### La ventana estratégica
 
